@@ -12,6 +12,15 @@ from tqdm import trange
 
 from util import ece, ParameterDistribution
 
+"""
+SITE :
+main model :
+https://github.com/JavierAntoran/Bayesian-Neural-Networks/blob/master/src/Bayes_By_Backprop/model.py
+
+priors :
+https://github.com/JavierAntoran/Bayesian-Neural-Networks/blob/master/src/priors.py
+"""
+
 # Set `EXTENDED_EVALUATION` to `True` in order to visualize your predictions.
 EXTENDED_EVALUATION = False
 
@@ -45,7 +54,7 @@ def run_solution(dataset_train: torch.utils.data.Dataset, data_dir: str = os.cur
     # IMPORTANT: return your model here!
     return model
 
-
+# LA CLASSE BBP_BAYES_NET SEMBLE REPRESENTER LE MODELE PRINCIPAL
 class Model(object):
     """
     Task 2 model that can be used to train a BNN using Bayes by backprop and create predictions.
@@ -118,7 +127,23 @@ class Model(object):
                     assert isinstance(self.network, BayesNet)
 
                     # TODO: Implement Bayes by backprop training here
+                    # Ici je me suis insipiré de la methode fit de la classe BBP_Bayes_Net dans model
+                    mlpdw_cum = 0
+                    Edkl_cum = 0
 
+                    for i in range(num_batches):
+                        out, tlqw, tlpw = self.network(batch_x)
+                        mlpdw_i = F.cross_entropy(out, batch_y, reduction='sum')
+                        Edkl_i = (tlqw - tlpw) / num_batches
+                        mlpdw_cum = mlpdw_cum + mlpdw_i
+                        Edkl_cum = Edkl_cum + Edkl_i
+
+                    mlpdw = mlpdw_cum / num_batches
+                    Edkl = Edkl_cum / num_batches
+
+                loss = Edkl + mlpdw
+
+                loss.backward()
                 self.optimizer.step()
 
                 # Update progress bar with accuracy occasionally
@@ -154,7 +179,28 @@ class Model(object):
         assert np.allclose(np.sum(output, axis=1), 1.0)
         return output
 
+"""
+idee de distribution
+class LaplaceDistribution(ParameterDistribution):
+    
+    Lapalace distribution.
 
+    def __init__(self, mu: torch.Tensor, sigma: torch.Tensor):
+        super(LaplaceDistribution, self).__init__()  # always make sure to include the super-class init call!
+        assert mu.size() == () and sigma.size() == ()
+        assert sigma > 0
+        self.mu = mu
+        self.sigma = sigma
+
+    def log_likelihood(self, values: torch.Tensor) -> torch.Tensor:
+        return (-np.log(2 * self.b) - torch.abs(values - self.mu) / self.b).sum()
+
+    def sample(self) -> torch.Tensor:
+        # TODo: Implement this
+        raise NotImplementedError()
+"""
+
+# LA CLASSE BayesLinear_Normalq SEMBLE REPRESENTER UN BAYESIAN LAYER
 class BayesianLayer(nn.Module):
     """
     Module implementing a single Bayesian feedforward layer.
@@ -179,7 +225,7 @@ class BayesianLayer(nn.Module):
         #  You can create constants using torch.tensor(...).
         #  Do NOT use torch.Parameter(...) here since the prior should not be optimized!
         #  Example: self.prior = MyPrior(torch.tensor(0.0), torch.tensor(1.0))
-        self.prior = None
+        self.prior = UnivariateGaussian(torch.tensor(0.0), torch.tensor(0.1))
         assert isinstance(self.prior, ParameterDistribution)
         assert not any(True for _ in self.prior.parameters()), 'Prior cannot have parameters'
 
@@ -193,7 +239,10 @@ class BayesianLayer(nn.Module):
         #      torch.nn.Parameter(torch.zeros((out_features, in_features))),
         #      torch.nn.Parameter(torch.ones((out_features, in_features)))
         #  )
-        self.weights_var_posterior = None
+        self.weights_var_posterior = MultivariateDiagonalGaussian(
+            nn.Parameter(torch.Tensor(self.in_features, self.out_features).uniform_(-0.1, 0.1)),
+            nn.Parameter(torch.Tensor(self.in_features, self.out_features).uniform_(-3, -2))
+        )
 
         assert isinstance(self.weights_var_posterior, ParameterDistribution)
         assert any(True for _ in self.weights_var_posterior.parameters()), 'Weight posterior must have parameters'
@@ -201,7 +250,10 @@ class BayesianLayer(nn.Module):
         if self.use_bias:
             # TODO: As for the weights, create the bias variational posterior instance here.
             #  Make sure to follow the same rules as for the weight variational posterior.
-            self.bias_var_posterior = None
+            self.bias_var_posterior = MultivariateDiagonalGaussian(
+            nn.Parameter(torch.Tensor(self.in_features, self.out_features).uniform_(-0.1, 0.1)),
+            nn.Parameter(torch.Tensor(self.in_features, self.out_features).uniform_(-3, -2))
+        )
             assert isinstance(self.bias_var_posterior, ParameterDistribution)
             assert any(True for _ in self.bias_var_posterior.parameters()), 'Bias posterior must have parameters'
         else:
@@ -223,14 +275,29 @@ class BayesianLayer(nn.Module):
         # TODO: Perform a forward pass as described in this method's docstring.
         #  Make sure to check whether `self.use_bias` is True,
         #  and if yes, include the bias as well.
-        log_prior = torch.tensor(0.0)
-        log_variational_posterior = torch.tensor(0.0)
-        weights = None
-        bias = None
+        # sample parameters
+        std_w = 1e-6 + F.softplus(self.weights_var_posterior.rho, beta=1, threshold=20)
+        std_b = 1e-6 + F.softplus(self.bias_var_posterior.rho, beta=1, threshold=20)
+        weights = self.weights_var_posterior.mu + 1 * std_w * self.weights_var_posterior.sample()
+        bias = self.bias_var_posterior.mu + 1 * std_b * self.bias_var_posterior.sample()
+        
+        if self.use_bias==True:
+            log_prior = self.prior.log_likelihood(weights) + self.prior.log_likelihood(bias)
+            log_variational_posterior = self.weights_var_posterior.log_likelihood(weights) + self.bias_var_posterior.log_likelihood(bias)
+        else:
+            log_prior = self.prior.log_likelihood(weights)
+            log_variational_posterior = self.weights_var_posterior.log_likelihood(weights)
 
-        return F.linear(inputs, weights, bias), log_prior, log_variational_posterior
+        # TODO : PROBLEM 1 -> is it normal we have to transpose ?
+        # #otw the linear function doesn't work
+        weights = torch.transpose(weights, 0, 1)
+
+        # TODO : PROBLEM 2 -> I deleted bias because bias should be of shape (100)
+        # bias.unsqueeze(0).expand(inputs.shape[0], -1) du github donne aussi une erreur
+        return F.linear(inputs, weights), log_prior, log_variational_posterior
 
 
+# LA CLASSE bayes_linear_2L SEMBLE REPRESENTER UN BAYESIAN NETWORK
 class BayesNet(nn.Module):
     """
     Module implementing a Bayesian feedforward neural network using BayesianLayer objects.
@@ -267,13 +334,25 @@ class BayesNet(nn.Module):
             ii) sample of the log-prior probability, and
             iii) sample of the log-variational-posterior probability
         """
+        current_features = x
+        # temp log variational posterior on weights
+        tlqw = 0
+        # temp log prior on weights
+        tlpw = 0
 
+        for idx, current_layer in enumerate(self.layers):
+            new_features, lqw, lpw = current_layer(current_features)
+            if idx < len(self.layers) - 1:
+                new_features = self.activation(new_features)
+            tlqw = tlqw + lqw
+            tlpw = tlpw + lpw
+            current_features = new_features
         # TODO: Perform a full pass through your BayesNet as described in this method's docstring.
         #  You can look at DenseNet to get an idea how a forward pass might look like.
         #  Don't forget to apply your activation function in between BayesianLayers!
-        log_prior = torch.tensor(0.0)
-        log_variational_posterior = torch.tensor(0.0)
-        output_features = None
+        log_prior = tlpw
+        log_variational_posterior = tlqw
+        output_features = current_features
 
         return output_features, log_prior, log_variational_posterior
 
@@ -294,6 +373,12 @@ class BayesNet(nn.Module):
         return estimated_probability
 
 
+# J'AI UTILISÉ LES CODES DE PRIORS DE LA CLASSE priors DU GIT
+# MAIS LES LOG LIKELIHOOD SONT LES MÊMES POUR UNIVARIATE ET MULTIVARIATE
+
+# POUR SAMPLE, ON DIRAIT QUE C'EST CE A QUOI CORRESPOND
+# eps_W = Variable(self.W_mu.data.new(self.W_mu.size()).normal_())
+# DANS BayesLinear_Normalq.forward()
 class UnivariateGaussian(ParameterDistribution):
     """
     Univariate Gaussian distribution.
@@ -308,12 +393,15 @@ class UnivariateGaussian(ParameterDistribution):
         self.sigma = sigma
 
     def log_likelihood(self, values: torch.Tensor) -> torch.Tensor:
-        # TODO: Implement this
-        return 0.0
+        # TODO: not sure this is true, same as Multivariate
+        cte_term = -(0.5) * np.log(2 * np.pi)
+        det_sig_term = -np.log(self.sigma)
+        dist_term = -(0.5) * (((values - self.mu) / self.sigma) ** 2)
+        return (cte_term + det_sig_term + dist_term).sum()
 
     def sample(self) -> torch.Tensor:
-        # TODO: Implement this
-        raise NotImplementedError()
+        # TODO: not sure this is true
+        return self.mu.data.new(self.mu.size()).normal_()
 
 
 class MultivariateDiagonalGaussian(ParameterDistribution):
@@ -332,12 +420,15 @@ class MultivariateDiagonalGaussian(ParameterDistribution):
         self.rho = rho
 
     def log_likelihood(self, values: torch.Tensor) -> torch.Tensor:
-        # TODO: Implement this
-        return 0.0
+        # TODO: not sure this is true
+        cte_term = -(0.5) * np.log(2 * np.pi)
+        det_sig_term = -torch.log(self.rho)
+        dist_term = -(0.5) * (((values - self.mu) / self.rho) ** 2)
+        return (cte_term + det_sig_term + dist_term).sum()
 
     def sample(self) -> torch.Tensor:
-        # TODO: Implement this
-        raise NotImplementedError()
+        # TODO: not sure this is true
+        return self.mu.data.new(self.mu.size()).normal_()
 
 
 def evaluate(model: Model, eval_loader: torch.utils.data.DataLoader, data_dir: str, output_dir: str):
@@ -525,11 +616,13 @@ class DenseNet(nn.Module):
 
 
 def main():
+    """
     raise RuntimeError(
         'This main method is for illustrative purposes only and will NEVER be called by the checker!\n'
         'The checker always calls run_solution directly.\n'
         'Please implement your solution exclusively in the methods and classes mentioned in the task description.'
     )
+    """
 
     # Load training data
     data_dir = os.curdir
