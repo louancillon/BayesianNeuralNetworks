@@ -13,12 +13,8 @@ from tqdm import trange
 from util import ece, ParameterDistribution
 
 """
-SITE :
-main model :
+main model inspired :
 https://github.com/JavierAntoran/Bayesian-Neural-Networks/blob/master/src/Bayes_By_Backprop/model.py
-
-priors :
-https://github.com/JavierAntoran/Bayesian-Neural-Networks/blob/master/src/priors.py
 """
 
 # Set `EXTENDED_EVALUATION` to `True` in order to visualize your predictions.
@@ -65,13 +61,13 @@ class Model(object):
     def __init__(self):
         # Hyperparameters and general parameters
         # You might want to play around with those
-        self.num_epochs = 100  # number of training epochs
+
+        self.num_epochs = 10  # number of training epochs
         self.batch_size = 128  # training batch size
         learning_rate = 1e-3  # training learning rates
         hidden_layers = (100, 100)  # for each entry, creates a hidden layer with the corresponding number of units
         use_densenet = False  # set this to True in order to run a DenseNet for comparison
         self.print_interval = 100  # number of batches until updated metrics are displayed during training
-
         # Determine network type
         if use_densenet:
             # DenseNet
@@ -125,33 +121,14 @@ class Model(object):
                 else:
                     # BayesNet training step via Bayes by backprop
                     assert isinstance(self.network, BayesNet)
-                    loss = torch.tensor(0.)
-                    for i in range(2):
+                    loss = torch.tensor(0.0)
+                    num_samples = 1
+                    for i in range(num_samples):
                         current_logits, log_prior, log_post = self.network(batch_x)
                         data_log_like = F.nll_loss(F.log_softmax(current_logits, dim=1), batch_y, reduction='sum')
-                        loss += (log_post/num_batches - log_prior/num_batches + data_log_like)/2
+                        loss += (log_post/num_batches - log_prior/num_batches + data_log_like)/num_samples
 
                     loss.backward(retain_graph=True)
-                    """
-                    # BayesNet training step via Bayes by backprop
-                    assert isinstance(self.network, BayesNet)
-
-                    # TODO: Implement Bayes by backprop training here
-                    loss_cum = torch.tensor(0.0)
-                    log_cum = torch.tensor(0.0)
-                    # Hyperparameters and general parameters
-                    # You might want to play around with those
-                    NUM_SAMPLES = 2
-
-                    for i in range(NUM_SAMPLES):
-                        out, tlp, tlvp = self.network(batch_x)
-                        loss = F.cross_entropy(out, batch_y, reduction='sum')
-                        Edkl_i = (tlp - tlvp) / num_batches
-                        loss_cum += loss
-                        log_cum += Edkl_i
-
-                    loss = (log_cum + loss_cum) / NUM_SAMPLES
-                    """
 
                 self.optimizer.step()
 
@@ -213,7 +190,7 @@ class BayesianLayer(nn.Module):
         #  You can create constants using torch.tensor(...).
         #  Do NOT use torch.Parameter(...) here since the prior should not be optimized!
         #  Example: self.prior = MyPrior(torch.tensor(0.0), torch.tensor(1.0))
-        self.prior = MultivariateDiagonalGaussian(torch.zeros((out_features, in_features)), torch.full((out_features, in_features), 0.5))
+        self.prior = MultivariateDiagonalGaussian(torch.zeros((out_features, in_features)), torch.full((out_features, in_features), 0.55))
         assert isinstance(self.prior, ParameterDistribution)
         assert not any(True for _ in self.prior.parameters()), 'Prior cannot have parameters'
 
@@ -228,8 +205,8 @@ class BayesianLayer(nn.Module):
         #      torch.nn.Parameter(torch.ones((out_features, in_features)))
         #  )
         self.weights_var_posterior = MultivariateDiagonalGaussian(
-            nn.Parameter(torch.Tensor(self.out_features, self.in_features).uniform_(-0.1, 0.1)),
-            nn.Parameter(torch.Tensor(self.out_features, self.in_features).uniform_(-3, -2))
+            nn.Parameter(torch.Tensor(out_features, in_features).uniform_(-0.2, 0.2)),
+            nn.Parameter(torch.Tensor(out_features, in_features).uniform_(-5, -4))
         )
 
         assert isinstance(self.weights_var_posterior, ParameterDistribution)
@@ -239,15 +216,14 @@ class BayesianLayer(nn.Module):
             # TODO: As for the weights, create the bias variational posterior instance here.
             #  Make sure to follow the same rules as for the weight variational posterior.
             self.bias_var_posterior = MultivariateDiagonalGaussian(
-                nn.Parameter(torch.Tensor(self.out_features, 1).uniform_(-0.1, 0.1)),
-                nn.Parameter(torch.Tensor(self.out_features, 1).uniform_(-3, -2))
+                nn.Parameter(torch.Tensor(out_features, 1).uniform_(-0.2, 0.2)),
+                nn.Parameter(torch.Tensor(out_features, 1).uniform_(-5, -4))
             )
-            self.bias_prior = MultivariateDiagonalGaussian(torch.zeros((out_features, 1)), torch.full((out_features, 1), 0.5))
+
             assert isinstance(self.bias_var_posterior, ParameterDistribution)
             assert any(True for _ in self.bias_var_posterior.parameters()), 'Bias posterior must have parameters'
         else:
             self.bias_var_posterior = None
-            self.bias_prior = None
 
     def forward(self, inputs: torch.Tensor):
         """
@@ -274,7 +250,7 @@ class BayesianLayer(nn.Module):
         
         if self.use_bias:
             bias = self.bias_var_posterior.sample()
-            log_prior += self.bias_prior.log_likelihood(bias)
+            log_prior += self.prior.log_likelihood(bias)
             log_variational_posterior += self.bias_var_posterior.log_likelihood(bias)
             bias = torch.squeeze(bias)
 
@@ -369,17 +345,13 @@ class UnivariateGaussian(ParameterDistribution):
         self.sigma = sigma
 
     def log_likelihood(self, values: torch.Tensor) -> torch.Tensor:
-        # TODO: not sure this is true, same as Multivariate
-        cte_term = -(0.5) * np.log(2 * np.pi)
-        det_sig_term = -np.log(self.sigma)
+        cte_term = -(0.5) * torch.log(2 * np.pi)
+        det_sig_term = -torch.log(self.sigma)
         dist_term = -(0.5) * (((values - self.mu) / self.sigma) ** 2)
-        # ou return - 0.5 * torch.log(2 * torch.pi * torch.square(self.sigma)) - torch.square(self.mu - value)/ (2 * torch.square(self.sigma))
-        return (cte_term + det_sig_term + dist_term).sum()
+        return torch.sum((cte_term + det_sig_term + dist_term))
 
     def sample(self) -> torch.Tensor:
-        # TODO: not sure this is true
-        return self.mu.data.new(self.mu.size()).normal_()
-        # ou return self.mu + self.sigma * np.random.normal()
+        return self.mu + self.sigma * np.random.normal()
 
 
 class MultivariateDiagonalGaussian(ParameterDistribution):
@@ -396,17 +368,15 @@ class MultivariateDiagonalGaussian(ParameterDistribution):
         assert mu.size() == rho.size()
         self.mu = mu
         self.rho = rho
-        self.sigma = F.softplus(self.rho)
+        self.sigma = torch.log(1 + torch.exp(rho))
 
     def log_likelihood(self, values: torch.Tensor) -> torch.Tensor:
-        # TODO: not sure this is true
         mean_diff = torch.square(values - self.mu)
         std = torch.square(self.sigma)
         loss_term = torch.div(mean_diff, 2 * std)
         return torch.sum(-loss_term - torch.log(2 * np.math.pi * std))
 
     def sample(self) -> torch.Tensor:
-        #return self.mu.data.new(self.mu.size()).normal_()
         return self.mu + self.sigma * np.random.normal()
 
 
