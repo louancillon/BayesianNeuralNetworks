@@ -13,7 +13,7 @@ from tqdm import trange
 from util import ece, ParameterDistribution
 
 """
-main model inspired :
+main model inspired by :
 https://github.com/JavierAntoran/Bayesian-Neural-Networks/blob/master/src/Bayes_By_Backprop/model.py
 """
 
@@ -62,7 +62,7 @@ class Model(object):
         # Hyperparameters and general parameters
         # You might want to play around with those
 
-        self.num_epochs = 10  # number of training epochs
+        self.num_epochs = 3  # number of training epochs
         self.batch_size = 128  # training batch size
         learning_rate = 1e-3  # training learning rates
         hidden_layers = (100, 100)  # for each entry, creates a hidden layer with the corresponding number of units
@@ -122,7 +122,7 @@ class Model(object):
                     # BayesNet training step via Bayes by backprop
                     assert isinstance(self.network, BayesNet)
                     loss = torch.tensor(0.0)
-                    num_samples = 1
+                    num_samples = 2
                     for i in range(num_samples):
                         current_logits, log_prior, log_post = self.network(batch_x)
                         data_log_like = F.nll_loss(F.log_softmax(current_logits, dim=1), batch_y, reduction='sum')
