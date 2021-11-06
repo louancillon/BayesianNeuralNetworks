@@ -272,6 +272,7 @@ class BayesianLayer(nn.Module):
             ii) sample of the log-prior probability, and
             iii) sample of the log-variational-posterior probability
         """
+
         # TODO: Perform a forward pass as described in this method's docstring.
         #  Make sure to check whether `self.use_bias` is True,
         #  and if yes, include the bias as well.
@@ -280,22 +281,22 @@ class BayesianLayer(nn.Module):
         std_b = 1e-6 + F.softplus(self.bias_var_posterior.rho, beta=1, threshold=20)
         weights = self.weights_var_posterior.mu + 1 * std_w * self.weights_var_posterior.sample()
         bias = self.bias_var_posterior.mu + 1 * std_b * self.bias_var_posterior.sample()
+        log_prior = self.prior.log_likelihood(weights)
+        log_variational_posterior = self.weights_var_posterior.log_likelihood(weights)
         
-        if self.use_bias==True:
+        if self.use_bias:
             log_prior = self.prior.log_likelihood(weights) + self.prior.log_likelihood(bias)
             log_variational_posterior = self.weights_var_posterior.log_likelihood(weights) + self.bias_var_posterior.log_likelihood(bias)
-        else:
-            log_prior = self.prior.log_likelihood(weights)
-            log_variational_posterior = self.weights_var_posterior.log_likelihood(weights)
 
         # TODO : PROBLEM 1 -> is it normal we have to transpose ?
         # #otw the linear function doesn't work
         weights = torch.transpose(weights, 0, 1)
 
         # TODO : PROBLEM 2 -> I deleted bias because bias should be of shape (100)
-        # bias.unsqueeze(0).expand(inputs.shape[0], -1) du github donne aussi une erreur
-        return F.linear(inputs, weights), log_prior, log_variational_posterior
+        #bias.unsqueeze(0).expand(inputs.shape[0], -1) #du github donne aussi une erreur
+        #return F.linear(inputs, weights), log_prior, log_variational_posterior
 
+        return F.linear(inputs, weights, torch.squeeze(bias)), log_prior, log_variational_posterior
 
 # LA CLASSE bayes_linear_2L SEMBLE REPRESENTER UN BAYESIAN NETWORK
 class BayesNet(nn.Module):
@@ -373,12 +374,6 @@ class BayesNet(nn.Module):
         return estimated_probability
 
 
-# J'AI UTILISÉ LES CODES DE PRIORS DE LA CLASSE priors DU GIT
-# MAIS LES LOG LIKELIHOOD SONT LES MÊMES POUR UNIVARIATE ET MULTIVARIATE
-
-# POUR SAMPLE, ON DIRAIT QUE C'EST CE A QUOI CORRESPOND
-# eps_W = Variable(self.W_mu.data.new(self.W_mu.size()).normal_())
-# DANS BayesLinear_Normalq.forward()
 class UnivariateGaussian(ParameterDistribution):
     """
     Univariate Gaussian distribution.
@@ -397,11 +392,13 @@ class UnivariateGaussian(ParameterDistribution):
         cte_term = -(0.5) * np.log(2 * np.pi)
         det_sig_term = -np.log(self.sigma)
         dist_term = -(0.5) * (((values - self.mu) / self.sigma) ** 2)
+        # ou return - 0.5 * torch.log(2 * torch.pi * torch.square(self.sigma)) - torch.square(self.mu - value)/ (2 * torch.square(self.sigma))
         return (cte_term + det_sig_term + dist_term).sum()
 
     def sample(self) -> torch.Tensor:
         # TODO: not sure this is true
         return self.mu.data.new(self.mu.size()).normal_()
+        # ou return self.mu + self.sigma * np.random.normal()
 
 
 class MultivariateDiagonalGaussian(ParameterDistribution):
@@ -418,17 +415,19 @@ class MultivariateDiagonalGaussian(ParameterDistribution):
         assert mu.size() == rho.size()
         self.mu = mu
         self.rho = rho
+        self.sigma = torch.nn.functional.softplus(self.rho)
 
     def log_likelihood(self, values: torch.Tensor) -> torch.Tensor:
         # TODO: not sure this is true
-        cte_term = -(0.5) * np.log(2 * np.pi)
-        det_sig_term = -torch.log(self.rho)
-        dist_term = -(0.5) * (((values - self.mu) / self.rho) ** 2)
-        return (cte_term + det_sig_term + dist_term).sum()
+        mean_diff = torch.square(values - self.mu)
+        std = torch.square(self.sigma)
+        loss_term = torch.div(mean_diff, 2 * std)
+        return torch.sum(-loss_term - torch.log(2 * np.math.pi * std))
 
     def sample(self) -> torch.Tensor:
         # TODO: not sure this is true
         return self.mu.data.new(self.mu.size()).normal_()
+        # ou return self.mu + self.sigma * np.random.normal()
 
 
 def evaluate(model: Model, eval_loader: torch.utils.data.DataLoader, data_dir: str, output_dir: str):
