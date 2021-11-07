@@ -32,8 +32,8 @@ MU_UNIFORM = (-0.2, 0.2)
 RHO_UNIFORM = (-5, -4)
 
 NUM_EPOCHS = 4 # number of training epochs
-NUM_SAMPLES = 75 # number of samples for training
-BATCH_SIZE = 512 # training batch size
+NUM_SAMPLES = 50 # number of samples for training
+BATCH_SIZE = 128 # training batch size
 LEARNING_RATE = 0.004 # training learning rates
 HIDDEN_LAYERS = (100, 100) # for each entry, creates a hidden layer with the corresponding number of units
 
