@@ -31,10 +31,11 @@ PRIOR_SIGMA = 0.1
 MU_UNIFORM = (-0.2, 0.2)
 RHO_UNIFORM = (-5, -4)
 
+
 NUM_EPOCHS = 4 # number of training epochs
-NUM_SAMPLES = 75 # number of samples for training
-BATCH_SIZE = 512 # training batch size
-LEARNING_RATE = 0.004 # training learning rates
+NUM_SAMPLES = 50 # number of samples for training
+BATCH_SIZE = 128 # training batch size
+LEARNING_RATE = 0.0029 # training learning rates
 HIDDEN_LAYERS = (100, 100) # for each entry, creates a hidden layer with the corresponding number of units
 
 def run_solution(dataset_train: torch.utils.data.Dataset, data_dir: str = os.curdir, output_dir: str = '/results/') -> 'Model':
@@ -48,7 +49,7 @@ def run_solution(dataset_train: torch.utils.data.Dataset, data_dir: str = os.cur
     :param data_dir: Directory containing the datasets
     :return: Your trained model
     """
-
+    torch.manual_seed(0)
     # Create model
     model = Model()
 
@@ -265,7 +266,7 @@ class BayesianLayer(nn.Module):
         weights = self.weights_var_posterior.sample()
         log_prior = self.prior.log_likelihood(weights)
         log_variational_posterior = self.weights_var_posterior.log_likelihood(weights)
-        
+
         if self.use_bias:
             bias = self.bias_var_posterior.sample()
             log_prior += self.prior.log_likelihood(bias)
@@ -360,6 +361,7 @@ class Laplace(ParameterDistribution):
         return torch.sum((-torch.log(2 * self.sigma) - torch.abs(values - self.mu) / self.sigma))
 
     def sample(self) -> torch.Tensor:
+        np.random.seed(42)
         return self.mu + self.sigma * np.random.normal()
 
 
@@ -382,6 +384,7 @@ class UnivariateGaussian(ParameterDistribution):
         return torch.sum((cte_term + det_sig_term + dist_term))
 
     def sample(self) -> torch.Tensor:
+        np.random.seed(42)
         return self.mu + self.sigma * np.random.normal()
 
 
@@ -417,6 +420,7 @@ class ScaleMixtureMVGaussian(ParameterDistribution):
         return log_like
 
     def sample(self) -> torch.Tensor:
+        np.random.seed(42)
         eps1 = np.random.normal()
         eps2 = np.random.normal()
         return self.mu + self.alpha * self.sigma1 * eps1 + (1 - self.alpha) * self.sigma2 * eps2
@@ -445,7 +449,8 @@ class MultivariateDiagonalGaussian(ParameterDistribution):
         return torch.sum(-loss_term - torch.log(2 * np.math.pi * std))
 
     def sample(self) -> torch.Tensor:
-        return self.mu + self.sigma * np.random.normal()
+        np.random.seed(42)
+        return (self.mu + self.sigma * np.random.normal())
 
 
 def evaluate(model: Model, eval_loader: torch.utils.data.DataLoader, data_dir: str, output_dir: str):
@@ -655,3 +660,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
