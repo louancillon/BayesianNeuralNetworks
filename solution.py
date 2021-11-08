@@ -20,11 +20,6 @@ https://github.com/JavierAntoran/Bayesian-Neural-Networks/blob/master/src/Bayes_
 # Set `EXTENDED_EVALUATION` to `True` in order to visualize your predictions.
 EXTENDED_EVALUATION = False
 
-# These are for ScaleMixtureMVGaussian but it does not seem the best choice either way
-#RHO_1 = 0.135
-#RHO_2 = 0.001
-#ALPHA = 0.5
-
 # The distribution can either be Laplace or UnivariateGaussian
 # Change the distribution in the BayesianLayer class
 PRIOR_SIGMA = 0.1
@@ -36,6 +31,7 @@ NUM_EPOCHS = 4 # number of training epochs
 NUM_SAMPLES = 50 # number of samples for training
 BATCH_SIZE = 128 # training batch size
 LEARNING_RATE = 0.0029 # training learning rates
+
 HIDDEN_LAYERS = (100, 100) # for each entry, creates a hidden layer with the corresponding number of units
 
 def run_solution(dataset_train: torch.utils.data.Dataset, data_dir: str = os.curdir, output_dir: str = '/results/') -> 'Model':
@@ -209,7 +205,6 @@ class BayesianLayer(nn.Module):
         #  Do NOT use torch.Parameter(...) here since the prior should not be optimized!
         #  Example: self.prior = MyPrior(torch.tensor(0.0), torch.tensor(1.0))
         self.prior = Laplace(torch.zeros((out_features, in_features)), torch.full((out_features, in_features), PRIOR_SIGMA))
-        #self.prior = ScaleMixtureMVGaussian(RHO_1 * torch.ones(out_features, in_features), RHO_2 * torch.ones(out_features, in_features), ALPHA)
         assert isinstance(self.prior, ParameterDistribution)
         assert not any(True for _ in self.prior.parameters()), 'Prior cannot have parameters'
 
@@ -386,44 +381,6 @@ class UnivariateGaussian(ParameterDistribution):
     def sample(self) -> torch.Tensor:
         np.random.seed(42)
         return self.mu + self.sigma * np.random.normal()
-
-
-class ScaleMixtureMVGaussian(ParameterDistribution):
-    """
-    ScaleMixture Gaussian to implement Spike and Slab model as per Bayes by Backprop paper. Note that this
-    implementation is prone to potential underflow and the computation of the log likelihood is not optimized
-    """
-
-    def __init__(self, rho1: torch.Tensor, rho2: torch.Tensor, alpha: float):
-        super(ScaleMixtureMVGaussian, self).__init__()  # always make sure to include the super-class init call!
-        assert rho1.size() == rho2.size()
-        # Assumes mu and sigmas are 2D (n x m) as per Multivariate Gaussian
-        sigma1 = torch.log(1 + torch.exp(rho1))
-        sigma2 = torch.log(1 + torch.exp(rho2))
-        self.gaussian1 = MultivariateDiagonalGaussian(torch.zeros(sigma1.shape), sigma1)
-        self.gaussian2 = MultivariateDiagonalGaussian(torch.zeros(sigma2.shape), sigma2)
-        self.alpha = alpha
-
-    def log_likelihood(self, values: torch.Tensor) -> torch.Tensor:
-        # Assumes values are 2D (n x m) as per Multivariate Gaussian
-        log_like_1 = self.gaussian1.log_likelihood(values)
-        log_like_2 = self.gaussian2.log_likelihood(values)
-        if log_like_2 > log_like_1 * 10:
-            log_like = log_like_2
-        elif log_like_1 > log_like_2 * 10:
-            log_like = log_like_1
-        else:
-            offset = (log_like_2 + log_like_1) / 2
-            likelihood = self.alpha * torch.exp(log_like_1 - offset) + (1 - self.alpha) * torch.exp(log_like_2 - offset)
-            log_like = torch.log(likelihood) + offset
-
-        return log_like
-
-    def sample(self) -> torch.Tensor:
-        np.random.seed(42)
-        eps1 = np.random.normal()
-        eps2 = np.random.normal()
-        return self.mu + self.alpha * self.sigma1 * eps1 + (1 - self.alpha) * self.sigma2 * eps2
 
 
 class MultivariateDiagonalGaussian(ParameterDistribution):
